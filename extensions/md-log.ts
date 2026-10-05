@@ -137,6 +137,18 @@ export default function mdLog(pi: ExtensionAPI) {
 		if (status === "unavailable") {
 			return callout("warning", "Quiz — unavailable", [details?.message || ""]);
 		}
+
+		if (details?.mode === "text") {
+			const body: string[] = [];
+			const studentAns = details?.note || details?.answers?.[0]?.label || "(empty response)";
+			body.push(`Your answer:\n${studentAns}`);
+			if (details?.explanation) {
+				body.push("");
+				body.push(`Rubric / target points:\n${details.explanation}`);
+			}
+			return callout("question", "Quiz — written response", body);
+		}
+
 		// "I don't know" is neither correct nor incorrect — it's a distinct signal,
 		// so it never renders as a red ✗.
 		const dontKnow = details?.dontKnow === true;
@@ -254,14 +266,16 @@ export default function mdLog(pi: ExtensionAPI) {
 		if (toolName !== "quiz") return;
 		const toolCallId = (event as any).toolCallId;
 		if (loggedQuizQuestion.has(toolCallId)) return;
-		const shuffled = (event as any).partialResult?.details?.options as Array<{ index: number; label: string }> | undefined;
-		if (!shuffled || shuffled.length === 0) return;
+		const details = (event as any).partialResult?.details;
+		const isText = details?.mode === "text";
+		const shuffled = details?.options as Array<{ index: number; label: string }> | undefined;
+		if (!isText && (!shuffled || shuffled.length === 0)) return;
 		loggedQuizQuestion.add(toolCallId);
 		const input = (event as any).args || {};
 		const question: string = input.question || "";
 		const context: string | undefined = input.details?.trim() || undefined;
-		const options = shuffled.map((o) => ({ label: o.label }));
-		const block = questionCallout("Quiz", question, context, options);
+		const options = shuffled ? shuffled.map((o) => ({ label: o.label })) : [];
+		const block = questionCallout(isText ? "Quiz (open-ended)" : "Quiz", question, context, options);
 		await withLock(() => appendToFile(block));
 	});
 
@@ -413,7 +427,8 @@ export default function mdLog(pi: ExtensionAPI) {
 				// shuffles, so its tool-call args are already the true order.
 				if (tc) {
 					const a = tc.args || {};
-					const label = tc.name === "quiz" ? "Quiz" : "Question";
+					const isTextQuiz = tc.name === "quiz" && msg.details?.mode === "text";
+					const label = tc.name === "quiz" ? (isTextQuiz ? "Quiz (open-ended)" : "Quiz") : "Question";
 					const shuffled = msg.toolName === "quiz"
 						? (msg.details?.options as Array<{ index: number; label: string }> | undefined)
 						: undefined;

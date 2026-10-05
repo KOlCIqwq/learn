@@ -1,0 +1,91 @@
+---
+name: quiz
+description: Test the user's understanding of concepts from linked folders, files, or specified topics. Generates deep, conceptual, open-ended questions that require the student to think, reason, and write their own answers, evaluates their responses, identifies knowledge gaps, and provides targeted feedback.
+---
+
+# Quiz & Knowledge Testing
+
+The goal is not trivia recall or multiple-choice guessing. The goal is **verifying genuine understanding**: testing whether the student can derive mechanisms, reason about causality, diagnose failure modes, and explain concepts in their own words.
+
+## Philosophy: Generative Retrieval over Option Recognition
+
+Multiple-choice questions test *recognition* — a student can often eliminate distractors by shape, guess lucky, or recognize keywords without having an integrated mental model.
+
+Real understanding requires **generative retrieval**:
+- The student must construct their reasoning from scratch.
+- The student writes their answer in an interactive editor.
+- The agent reads their written response, assesses nuances, flags misconceptions, and provides targeted feedback.
+
+Options-based multiple choice is reserved strictly for rapid diagnostic edge-probing (binary-searching where knowledge breaks down). Primary testing should be open-ended and conceptual.
+
+## Step 1: Ingesting Knowledge from Linked Sources
+
+Knowledge to test comes from:
+1. **Linked source path** set via `/quiz-source <path>` (persisted in session state).
+2. **Explicit paths, files, or folders** passed by the user in chat or via `@file` references.
+3. If no source path is specified, ask the user what materials or topic they want to be tested on.
+
+### How to acquire knowledge from the source:
+- **Scan directory structure:** Use `find` or `ls` to survey the scope.
+- **Inspect key files:** Use `read` and `grep` (or spawn a `researcher` subagent for large codebases or literature) to build a clear topic hierarchy.
+- **Identify high-leverage targets:**
+  - *Core definitions & unconditional truths* (the ground rules of the domain).
+  - *Causal mechanisms* (how components interact and why).
+  - *Design tradeoffs & constraints* (why approach A was picked over B).
+  - *Edge cases & failure modes* (what breaks when invariants fail).
+  - *Common traps* (counter-intuitive behaviors and frequent misconceptions).
+
+## Step 2: Designing Conceptual Questions
+
+Write questions that force the student to think and explain, not recite:
+
+### Good Question Archetypes:
+1. **Mechanism & Derivation:**
+   - *"How does [component X] ensure [property Y]? Walk through the step-by-step mechanism."*
+   - *"Why can't we simply [naive alternative Z]? What breaks?"*
+2. **Failure Analysis & Debugging:**
+   - *"Suppose [condition C] occurs. Trace the exact chain of events and predict the failure."*
+   - *"A user encounters error E under state S. What invariant was violated and where?"*
+3. **First-Principles Tradeoff:**
+   - *"Compare approach A and approach B for [workload W]. Under what specific conditions does A outperform B, and what do you sacrifice?"*
+4. **Boundary & Counter-factual Reasoning:**
+   - *"If we remove [constraint K], does the system still remain sound? Why or why not?"*
+
+### Rules for Questions:
+- Ask exactly **one** focused question per tool call.
+- State clear expectations in `details` (e.g., what aspects to address).
+- Do not ask open-ended questions so broad they require writing an essay; keep the scope tightly bounded to a single concept or interaction.
+
+## Step 3: Posing the Question via `quiz`
+
+Use the `quiz` tool:
+- **Open-Ended / Free-Text (Default):**
+  - Omit `options` (or leave empty).
+  - Provide `question`: the prompt to answer.
+  - Provide `details`: any context, setup scenario, or rubric hints.
+  - Provide `explanation`: the key ground-truth points / rubric criteria you will grade against.
+  - The student gets an editor popup in the TUI, types their answer, and submits.
+- **Diagnostic Multiple-Choice (When mapping boundaries quickly):**
+  - Provide `options` (at least 2 bare claims), `correctAnswer` (option value), and `explanation`.
+  - Follow strict distractor construction: each distractor must represent a believable specific misconception.
+
+## Step 4: Rigorous Evaluation & Socratic Feedback
+
+When the student submits their written answer, evaluate it with precision:
+
+1. **Acknowledge accurate understanding:** Specifically cite which parts of their mental model are solid.
+2. **Isolate specific errors or gaps:**
+   - Did they confuse causality?
+   - Did they miss a critical invariant or constraint?
+   - Did they hold a common misconception?
+3. **Explain the causal reason:** Don't just assert the right answer; show *why* the physics, logic, or code behaves that way, referencing the linked source file or lines.
+4. **Adaptive next step:**
+   - If they nailed it: escalate difficulty or move to the next dependent concept in the knowledge graph.
+   - If they had a partial gap: ask a quick targeted follow-up to guide them to self-correct.
+   - If they missed a foundational root: step back and test the prerequisite unconditional truth before re-attempting.
+
+## Step 5: Formatting & Tone
+
+- **Tone:** Direct, rigorous, supportive, intellectually honest. No false praise or empty filler.
+- **Math/Formulas:** Render in LaTeX (`$...` for inline, `$$...$$` for display) for Obsidian compatibility.
+- **Session Progress:** Keep track of topics tested, concepts mastered, and gaps to review.

@@ -1,4 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
 	Editor,
 	type EditorTheme,
@@ -59,7 +61,7 @@ interface QuizResponse {
 }
 
 type QuizStatus = "answered" | "cancelled" | "unavailable";
-type QuizMode = "single-select" | "multi-select";
+type QuizMode = "text" | "single-select" | "multi-select";
 
 interface DisplayedOption {
 	index: number; // 1-based, in the final (possibly shuffled) display order
@@ -77,6 +79,7 @@ interface QuizResultDetails {
 	correct?: boolean;
 	dontKnow?: boolean; // user selected "I don't know" instead of guessing
 	note?: string; // optional free-text from the always-present note field (any answer)
+	answer?: string;
 	explanation?: string;
 	message?: string;
 }
@@ -94,28 +97,33 @@ const QuizParams = Type.Object({
 		description: "The single quiz question to ask. Ask exactly one question per tool call.",
 	}),
 	details: Type.Optional(
-		Type.String({ description: "Optional extra context or instructions shown under the question." }),
+		Type.String({ description: "Optional extra context, instructions, or rubric hints shown under the question." }),
 	),
-	options: Type.Array(OptionSchema, {
-		description:
-			"The answer options (2 or more). Options only — there is no free-text mode. Give each option a stable `value`; you reference the correct one by that value in correctAnswer.",
-		minItems: 2,
-	}),
+	options: Type.Optional(
+		Type.Array(OptionSchema, {
+			description:
+				"Optional answer options (2 or more). If omitted or empty, quiz operates in free-text mode where the student writes their answer in an editor for you to evaluate and give feedback.",
+		}),
+	),
 	multiSelect: Type.Optional(
-		Type.Boolean({ description: "Set to true when more than one option is correct and the user must select all of them." }),
+		Type.Boolean({ description: "Set to true when more than one option is correct and the user must select all of them (options mode only)." }),
 	),
-	correctAnswer: Type.Union([Type.String(), Type.Array(Type.String())], {
-		description:
-			'REQUIRED. The correct answer as the option value(s) — the `value` field of the option you intend. Single-select: a single string (e.g. "mercury"). Multi-select: an array of strings (e.g. ["belize", "niue"]); the user is only correct if their selection matches this set exactly. Always pass the value, not a position number — this is self-checking and prevents miscounting.',
-	}),
-	explanation: Type.String({
-		description:
-			"REQUIRED. Explanation revealed AFTER the user answers (shown whether they got it right or wrong). Use it to reinforce why the correct answer is correct.",
-	}),
+	correctAnswer: Type.Optional(
+		Type.Union([Type.String(), Type.Array(Type.String())], {
+			description:
+				'Required for options mode. The correct answer as the option value(s). Omit in free-text mode.',
+		}),
+	),
+	explanation: Type.Optional(
+		Type.String({
+			description:
+				"Explanation or rubric revealed/used to explain why the correct answer is correct, or expected key points in free-text mode.",
+		}),
+	),
 	shuffle: Type.Optional(
 		Type.Boolean({
 			description:
-				"Defaults to true: options are randomly reordered before display so the correct answer isn't always in the same position. Set to false only when option order is meaningful (e.g. ordered numeric values, or an 'All/None of the above' option that must stay last).",
+				"Defaults to true: options are randomly reordered before display. Set to false only when option order is meaningful.",
 		}),
 	),
 });
@@ -123,6 +131,7 @@ const QuizParams = Type.Object({
 function normalizeOptions(
 	options: Array<{ label: string; value?: string; description?: string }> | undefined,
 ): QuizOption[] {
+	if (!options || !Array.isArray(options)) return [];
 	const seen = new Set<string>();
 	return (options || [])
 		.map((option) => ({
@@ -874,36 +883,132 @@ function withUILock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export default function quiz(pi: ExtensionAPI) {
+	let quizSourcePath: string | null = null;
+
+	pi.on("session_start", async (_event, ctx) => {
+		let lastSourceData: { path: string | null } | undefined;
+		for (const entry of ctx.sessionManager.getEntries()) {
+			if (entry.type === "custom" && entry.customType === "quiz-source") {
+				lastSourceData = entry.data as { path: string | null } | undefined;
+			}
+		}
+		if (lastSourceData?.path) {
+			quizSourcePath = lastSourceData.path;
+			const theme = ctx.ui.theme;
+			ctx.ui.setStatus(
+				"quiz-source",
+				theme.fg("accent", "📚 ") + theme.fg("dim", path.basename(quizSourcePath)),
+			);
+		}
+	});
+
+	pi.registerCommand("quiz-source", {
+		description: "Link a folder or file as the knowledge source for quizzes",
+		handler: async (args, ctx: any) => {
+			const targetPath = args.trim();
+			if (!targetPath) {
+				if (quizSourcePath) {
+					ctx.ui.notify(`Current quiz source: ${quizSourcePath}`, "info");
+				} else {
+					ctx.ui.notify("Usage: /quiz-source <path-to-folder-or-file>", "warning");
+				}
+				return;
+			}
+
+			if (targetPath.toLowerCase() === "clear" || targetPath.toLowerCase() === "none") {
+				quizSourcePath = null;
+				pi.appendEntry("quiz-source", { path: null });
+				ctx.ui.setStatus("quiz-source", undefined);
+				ctx.ui.notify("Quiz source unlinked", "info");
+				return;
+			}
+
+			const resolved = path.isAbsolute(targetPath) ? targetPath : path.resolve(ctx.cwd, targetPath);
+
+			if (!fs.existsSync(resolved)) {
+				ctx.ui.notify(`Path does not exist: ${resolved}`, "error");
+				return;
+			}
+
+			quizSourcePath = resolved;
+			pi.appendEntry("quiz-source", { path: resolved });
+
+			const theme = ctx.ui.theme;
+			ctx.ui.setStatus(
+				"quiz-source",
+				theme.fg("accent", "📚 ") + theme.fg("dim", path.basename(resolved)),
+			);
+			ctx.ui.notify(`Linked quiz source: ${resolved}`, "success");
+
+			if (typeof ctx.isIdle === "function" && ctx.isIdle()) {
+				pi.sendUserMessage(`I linked knowledge source: "${resolved}". Inspect the files, identify the foundational principles and key mechanisms, and start quizzing me on these materials with deep, thought-provoking questions.`);
+			}
+		},
+	});
+
 	pi.registerTool({
 		name: "quiz",
 		label: "quiz",
 		description:
-			"Ask the user a GRADED question with a known correct answer, then instantly grade and give feedback. Unlike ask_user_question (which collects preferences/decisions with no right answer), quiz always has a correct answer supplied by you, marks the user's selection right/wrong (✓/✗), reveals the correct answer, and can show an explanation. Use it to (1) assess what the learner already understands before teaching, and (2) run tight practice/retrieval loops after explaining, or probe understanding whenever you're unsure they've got it. Options-only: single-select or multi-select, plus an automatic 'I don't know' choice so the user can signal a genuine gap instead of guessing. An always-present optional note field (Tab to focus it) lets the user attach a free-text note to ANY answer; it reaches you only when non-empty. No free-text answers — for non-graded questions use ask_user_question instead.",
+			"Ask the user a quiz question to test their understanding. Supports both open-ended free-text questions (default when options is omitted, allowing the student to write their answer in an editor for you to evaluate) and multiple-choice questions (when options is provided, instantly graded). Use open-ended mode for deep conceptual testing, derivations, tradeoffs, and failure-mode analysis. Use options mode for fast diagnostic edge-probing.",
 		promptSnippet:
-			"Use the quiz tool to test the user with a graded multiple-choice or multi-select question (required correct answer + required explanation). For non-graded questions, use ask_user_question.",
+			"Use the quiz tool to test the user with an open-ended conceptual question (leave options empty) or a graded multiple-choice question. For non-graded preference/decision questions, use ask_user_question.",
 		promptGuidelines: [
-			"quiz is GRADED; ask_user_question is not. If the question has a correct answer, use quiz. If you just need a preference, decision, or open-ended input, use ask_user_question.",
-			'correctAnswer is REQUIRED and is the option value, not a position number. Single-select: one string (e.g. "mercury"). Multi-select: an array of strings (e.g. ["belize", "niue"]).',
-			"Always pass the option's `value` string as correctAnswer — it is self-checking and prevents miscounting positions. A value that matches no option is a hard error.",
-			"explanation is REQUIRED — always say why the correct answer is correct.",
-			"Multi-select is graded as an exact-set match: the user is correct only if they select every correct option and no incorrect ones.",
-			"There is no free-text mode. An 'I don't know' choice is ALWAYS added automatically — provide ONLY the real, gradable options (at least two). Never add your own uncertainty/opt-out option like 'I don't know', 'I'm not sure', or 'Not sure'; that is handled for you and a manual one would be redundant or gradable-as-wrong.",
-			"If a result comes back as dontKnow, the user honestly did not know and did NOT guess — treat it as a genuine knowledge gap to teach into, not as a wrong answer.",
-			"Any answer (right, wrong, or 'I don't know') may carry an optional free-text `note` the user typed in the always-present note field. When present it reflects what they were thinking or unsure about — read it and let it steer your follow-up. It is omitted entirely when empty.",
-			"Treat each wrong answer (distractor) as a diagnostic probe, not just filler: make it a specific, believable mistake the user might actually hold — a common misconception, or an adjacent/easily-confused concept — so that WHICH wrong answer they pick reveals WHICH nuance of their understanding is off. You learn far more from a targeted wrong choice than from a binary right/wrong, and the choice tells you exactly which gap to teach into next (and what the explanation should address).",
-			"Guardrail: every distractor must be unambiguously wrong on the intended reading — tempting, but a real error, not a defensible alternative. Don't drift into trick questions.",
-			"Anti-guessing hygiene: don't let the correct answer stand out by form (longest, most precise, most hedged, or the only one in the right format). Keep options similar in length, specificity, and phrasing so it can't be picked from shape alone.",
-			"Set multiSelect: true only when more than one option is correct.",
-			"Options are shuffled before display by default, so don't worry about which position you list the correct answer in. Set shuffle: false only when option order is meaningful (ordered values, or an 'All/None of the above' option that must stay last).",
-			"To probe nuance, ask several quick quiz questions and adapt each one based on the previous answers, rather than writing one giant question.",
-			"Don't leak the answer through formatting: keep option phrasing/length even and don't hint which is correct.",
+			"Use open-ended mode (omit options) as default for conceptual testing: the student types their full reasoning in an editor, and you evaluate their response with targeted feedback.",
+			"When using open-ended mode, provide explanation containing the key points/rubric to grade against.",
+			"Options mode (with at least 2 options) is available when you need fast diagnostic edge-probing. In options mode, correctAnswer is required and matches the option value string.",
+			"quiz tests understanding with evaluation; ask_user_question is for preferences, choices, or general clarifications without evaluation.",
 		],
 		parameters: QuizParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const context = params.details?.trim() || undefined;
-			const explanation = params.explanation.trim();
-			const mode: QuizMode = params.multiSelect ? "multi-select" : "single-select";
+			const explanation = params.explanation?.trim();
+			const rawOptions = params.options;
+			const isTextMode = !rawOptions || rawOptions.length === 0;
+			const mode: QuizMode = isTextMode ? "text" : params.multiSelect ? "multi-select" : "single-select";
+
+			if (signal?.aborted) {
+				return cancelledResult(params.question, mode, [], context);
+			}
+
+			if (!ctx.hasUI) {
+				return unavailableResult(params.question, mode, "quiz requires interactive mode UI", [], context);
+			}
+
+			if (isTextMode) {
+				return withUILock(async () => {
+					onUpdate?.({
+						content: [{ type: "text", text: "Awaiting user written response in editor..." }],
+						details: { mode: "text", options: [] },
+					});
+
+					const editorTitle = context ? `${params.question}\n\n${context}` : params.question;
+					const answer = await ctx.ui.editor(editorTitle);
+					if (answer === undefined) {
+						return cancelledResult(params.question, mode, [], context);
+					}
+					const textAnswer = answer.trim();
+					const message = `User submitted written answer for evaluation:\n\n${textAnswer || "(empty response)"}\n\nEvaluate the user's answer against the target concept. Clearly explain what is accurate, identify misconceptions or missing links, and provide targeted feedback.`;
+					return {
+						content: [{ type: "text" as const, text: message }],
+						details: buildStructuredResult(
+							"answered",
+							params.question,
+							mode,
+							[{ label: textAnswer, value: textAnswer, index: 1 }],
+							[],
+							undefined,
+							explanation,
+							context,
+							undefined,
+							[],
+							false,
+							textAnswer,
+						),
+					};
+				});
+			}
 
 			let options: QuizOption[];
 			try {
@@ -979,10 +1084,11 @@ export default function quiz(pi: ExtensionAPI) {
 				args.options as Array<{ label: string; value?: string; description?: string }> | undefined,
 			);
 			let text = theme.fg("toolTitle", theme.bold("quiz ")) + theme.fg("muted", args.question);
-			if (args.multiSelect) {
+			if (options.length === 0) {
+				text += theme.fg("dim", " [open-ended]");
+			} else if (args.multiSelect) {
 				text += theme.fg("dim", " [multi-select]");
-			}
-			if (options.length > 0) {
+			} else {
 				const noun = options.length === 1 ? "option" : "options";
 				text += theme.fg("dim", ` (${options.length} ${noun})`);
 			}
@@ -1001,6 +1107,18 @@ export default function quiz(pi: ExtensionAPI) {
 			}
 			if (details.status === "unavailable") {
 				return new Text(theme.fg("warning", details.message || "quiz unavailable"), 0, 0);
+			}
+
+			if (details.mode === "text") {
+				const lines: string[] = [];
+				lines.push(theme.fg("accent", "Student Answer:"));
+				const userAns = details.note || details.answers?.[0]?.label || "(empty response)";
+				lines.push(userAns);
+				if (details.explanation) {
+					lines.push("");
+					lines.push(theme.fg("dim", `Rubric / Key Points: ${details.explanation}`));
+				}
+				return new Text(lines.join("\n"), 0, 0);
 			}
 
 			const correctSet = new Set(details.correctIndices);

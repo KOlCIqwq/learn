@@ -9,9 +9,10 @@ This is a personal system I built for myself, shared as-is. Built as a pi config
 ## What's in it
 
 - `skills/teach/` — the philosophy and the process
+- `skills/quiz/` — active retrieval testing on linked knowledge sources with open-ended conceptual evaluation
 - `skills/visualize/` — adds a correct, minimal diagram to a lesson when an idea is clearer as a picture
 - `extensions/ask-user-question/` — the agent asks you questions through a UI popup
-- `extensions/quiz/` — graded questions with instant feedback (✓/✗, correct answer, explanation)
+- `extensions/quiz/` — open-ended (free-text editor) and graded options questions, plus `/quiz-source` command
 - `extensions/md-log/` — link a markdown file to the session
 - `extensions/visual-tools/` — tools for visualization subagents
 - `agents/` — `researcher`, `svg-maker`, `mermaid-maker`: the subagents the system delegates to

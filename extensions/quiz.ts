@@ -73,6 +73,7 @@ interface QuizResultDetails {
 	question: string;
 	context?: string;
 	mode: QuizMode;
+	difficulty?: "easy" | "medium" | "hard";
 	answers: OptionAnswer[];
 	correctIndices: number[];
 	options?: DisplayedOption[]; // full option list in display order, for the transcript
@@ -124,6 +125,11 @@ const QuizParams = Type.Object({
 		Type.Boolean({
 			description:
 				"Defaults to true: options are randomly reordered before display. Set to false only when option order is meaningful.",
+		}),
+	),
+	difficulty: Type.Optional(
+		Type.Union([Type.Literal("easy"), Type.Literal("medium"), Type.Literal("hard")], {
+			description: "Optional difficulty level: easy, medium, or hard.",
 		}),
 	),
 });
@@ -1045,6 +1051,7 @@ export default function quiz(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const context = params.details?.trim() || undefined;
 			const explanation = params.explanation?.trim();
+			const difficulty = params.difficulty;
 			const rawOptions = params.options;
 			const isTextMode = !rawOptions || rawOptions.length === 0;
 			const mode: QuizMode = isTextMode ? "text" : params.multiSelect ? "multi-select" : "single-select";
@@ -1164,7 +1171,12 @@ export default function quiz(pi: ExtensionAPI) {
 			const options = normalizeOptions(
 				args.options as Array<{ label: string; value?: string; description?: string }> | undefined,
 			);
-			let text = theme.fg("toolTitle", theme.bold("quiz ")) + theme.fg("muted", args.question);
+			let text = theme.fg("toolTitle", theme.bold("quiz "));
+			if (args.difficulty) {
+				const diffColor = args.difficulty === "easy" ? "success" : args.difficulty === "hard" ? "error" : "warning";
+				text += theme.fg(diffColor, `[${args.difficulty}] `);
+			}
+			text += theme.fg("muted", args.question);
 			if (options.length === 0) {
 				text += theme.fg("dim", " [open-ended]");
 			} else if (args.multiSelect) {

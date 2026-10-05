@@ -13,6 +13,7 @@ This is a personal system I built for myself, shared as-is. Built as a pi config
 - `skills/visualize/` — adds a correct, minimal diagram to a lesson when an idea is clearer as a picture
 - `extensions/ask-user-question/` — the agent asks you questions through a UI popup
 - `extensions/quiz/` — open-ended (free-text editor) and graded options questions, plus `/quiz-source` command
+- `extensions/draw-diagram.ts` — interactive diagram generator (Mermaid & SVG) snapped directly into Obsidian `.md`
 - `extensions/md-log/` — link a markdown file to the session
 - `extensions/visual-tools/` — tools for visualization subagents
 - `agents/` — `researcher`, `svg-maker`, `mermaid-maker`: the subagents the system delegates to

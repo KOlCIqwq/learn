@@ -25,6 +25,23 @@ Knowledge to test comes from:
 2. **Explicit paths, files, or folders** passed by the user in chat or via `@file` references.
 3. If `get_quiz_sources` returns empty and no path is passed, ask the user what materials or topics they want to be tested on.
 
+### Difficulty Selection:
+Ask or confirm user preference at session start:
+- **Easy:** Core definitions, foundational axioms, direct causal mechanisms, clear baseline invariants.
+- **Medium:** Tradeoff comparisons, multi-component interactions, why naive alternatives fail, standard scenario analysis.
+- **Hard:** Boundary stress tests, invariant violations, counter-factual derivations, subtle failure modes, cross-module synthesis.
+- **Mixed / Adaptive (Default for Exam Prep):**
+  - Starts with an easy/medium anchor on a topic.
+  - Advances to harder questions on that topic as the student proves mastery.
+  - **Strict Topic Isolation Rule:** Mastery is scoped to each topic. Answering a hard question on Topic A does *not* mean the student knows hard concepts on Topic B. Every new topic must be probed from its own anchor before escalating.
+  - The agent has full discretion to ask multiple questions per topic to test depth, or pivot across topics.
+
+### Non-Linear & Interleaved Questioning (Exam Simulation):
+Do NOT test sequentially in the order topics were introduced or organized in files.
+- Real exams are non-linear: professors mix questions across different chapters and modules.
+- **Interleaved Sampling:** Randomly jump between distinct topics, mechanisms, and files across the linked sources. Interleaving disrupts short-term memory momentum and forces the brain to retrieve mental models cold — which builds durable retention.
+- **Spaced Re-probing:** After jumping across other topics, loop back to a previously tested topic at a higher difficulty to verify long-term retention.
+
 ### How to acquire knowledge from the source:
 - **Scan directory structure:** Use `find` or `ls` to survey the scope.
 - **Inspect key files:** Use `read` and `grep` (or spawn a `researcher` subagent for large codebases or literature) to build a clear topic hierarchy.
@@ -63,10 +80,11 @@ Use the `quiz` tool:
   - Omit `options` (or leave empty).
   - Provide `question`: the prompt to answer.
   - Provide `details`: any context, setup scenario, or rubric hints.
+  - Provide `difficulty`: `"easy"`, `"medium"`, or `"hard"`.
   - Provide `explanation`: the key ground-truth points / rubric criteria you will grade against.
   - The student gets an editor popup in the TUI, types their answer, and submits.
 - **Diagnostic Multiple-Choice (When mapping boundaries quickly):**
-  - Provide `options` (at least 2 bare claims), `correctAnswer` (option value), and `explanation`.
+  - Provide `options` (at least 2 bare claims), `correctAnswer` (option value), `difficulty`, and `explanation`.
   - Follow strict distractor construction: each distractor must represent a believable specific misconception.
 
 ## Step 4: Rigorous Evaluation & Socratic Feedback
@@ -87,5 +105,13 @@ When the student submits their written answer, evaluate it with precision:
 ## Step 5: Formatting & Tone
 
 - **Tone:** Direct, rigorous, supportive, intellectually honest. No false praise or empty filler.
-- **Math/Formulas:** Render in LaTeX (`$...` for inline, `$$...$$` for display) for Obsidian compatibility.
+- **Interactive Diagrams — No Terminal ASCII:** Never draw ASCII art or text wireframes in terminal messages. When a question or explanation involves structure, workflows, architecture, states, geometry, or math curves, call the `draw_diagram` tool (`type: "mermaid"`, `"svg"`, or `"python"` for matplotlib curves/plots). It creates a clean asset in `viz/` and snaps an interactive visual directly into the student's Obsidian note.
+- **Math/Formulas in Markdown:** Always enclose math formulas and quantitative expressions in `$$` fences for clean Obsidian rendering:
+  - Inline formulas: `$$x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$$`
+  - Display blocks:
+    ```markdown
+    $$
+    \nabla \cdot \mathbf{E} = \frac{\rho}{\varepsilon_0}
+    $$
+    ```
 - **Session Progress:** Keep track of topics tested, concepts mastered, and gaps to review.

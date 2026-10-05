@@ -136,6 +136,15 @@ Repeat this full loop per node — don't front-load all the foundations once at 
 
 If you catch yourself asserting a fact he'd have to take on faith — foundational or not — stop: either motivate it and confirm it lands, or ground it in something already established. Unmotivated, unconfirmed facts don't lock in — that's the whole point.
 
+## Visuals & Diagrams — No Terminal ASCII
+
+Never draw ASCII art or text wireframes in the terminal. They are clunky, hard to parse, and misalign across terminals. When an idea is structural, sequential, or geometric:
+- Call the `draw_diagram` tool:
+  - `type: "mermaid"` for relational, flow, state, sequence, or dependency graphs.
+  - `type: "svg"` for clean vector geometry and custom shapes.
+  - `type: "python"` for mathematical functions, statistical distributions, neural net activations, signals, or scientific plots (uses matplotlib/numpy if available).
+- It stores the diagram in `viz/` and snaps it cleanly into the Obsidian `.md` log file where it renders live and interactively.
+
 ## Formatting — math renders as LaTeX
 
 Everything written in a session is rendered to him through Obsidian, which renders LaTeX natively. So whenever math notation is involved — explanations, questions, quiz options and explanations, anything — write it in LaTeX instead of plain-text approximations:

@@ -29,7 +29,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const QA_TOOLS = new Set(["quiz", "ask_user_question"]);
+const QA_TOOLS = new Set(["quiz", "ask_user_question", "draw_diagram"]);
 
 export default function mdLog(pi: ExtensionAPI) {
 	let logFile: string | null = null;
@@ -140,6 +140,10 @@ export default function mdLog(pi: ExtensionAPI) {
 
 		if (details?.mode === "text") {
 			const body: string[] = [];
+			if (details?.difficulty) {
+				body.push(`Difficulty: ${details.difficulty}`);
+				body.push("");
+			}
 			const studentAns = details?.note || details?.answers?.[0]?.label || "(empty response)";
 			body.push(`Your answer:\n${studentAns}`);
 			if (details?.explanation) {
@@ -205,6 +209,33 @@ export default function mdLog(pi: ExtensionAPI) {
 		});
 		if (body.length === 0) body.push("(no answer)");
 		return callout("example", "Answer", body);
+	}
+
+	function calloutDiagram(details: any): string {
+		const type = details?.type || "mermaid";
+		const caption = details?.caption || "Diagram";
+		const code = details?.code || "";
+		const filename = details?.filename || "";
+		const body: string[] = [];
+
+		if (type === "mermaid") {
+			body.push("```mermaid");
+			for (const line of code.split("\n")) body.push(line);
+			body.push("```");
+		} else {
+			if (filename) {
+				body.push(`![[${filename}]]`);
+			} else {
+				body.push("```xml");
+				for (const line of code.split("\n")) body.push(line);
+				body.push("```");
+			}
+		}
+		if (filename) {
+			body.push("");
+			body.push(`_Saved: viz/${filename}_`);
+		}
+		return callout("note", `🎨 Diagram: ${caption}`, body);
 	}
 
 	// --- Event handlers ---
@@ -284,9 +315,11 @@ export default function mdLog(pi: ExtensionAPI) {
 		const toolName = (event as any).toolName;
 		if (!QA_TOOLS.has(toolName)) return;
 		const details = (event as any).details;
-		const block = toolName === "quiz"
-			? answerCalloutQuiz(details)
-			: answerCalloutAsk(details);
+		const block = toolName === "draw_diagram"
+			? calloutDiagram(details)
+			: toolName === "quiz"
+				? answerCalloutQuiz(details)
+				: answerCalloutAsk(details);
 		await withLock(() => appendToFile(block));
 	});
 
@@ -425,7 +458,7 @@ export default function mdLog(pi: ExtensionAPI) {
 				// than the original tool-call args, which are the pre-shuffle author
 				// order and can mismatch what's on screen. ask_user_question never
 				// shuffles, so its tool-call args are already the true order.
-				if (tc) {
+				if (tc && tc.name !== "draw_diagram") {
 					const a = tc.args || {};
 					const isTextQuiz = tc.name === "quiz" && msg.details?.mode === "text";
 					const label = tc.name === "quiz" ? (isTextQuiz ? "Quiz (open-ended)" : "Quiz") : "Question";
@@ -437,7 +470,9 @@ export default function mdLog(pi: ExtensionAPI) {
 						: (Array.isArray(a.options) ? a.options : []);
 					blocks.push(questionCallout(label, a.question || "", a.details?.trim() || undefined, options));
 				}
-				if (msg.toolName === "quiz") {
+				if (msg.toolName === "draw_diagram") {
+					blocks.push(calloutDiagram(msg.details));
+				} else if (msg.toolName === "quiz") {
 					blocks.push(answerCalloutQuiz(msg.details));
 				} else {
 					blocks.push(answerCalloutAsk(msg.details));

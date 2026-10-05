@@ -882,67 +882,148 @@ function withUILock<T>(fn: () => Promise<T>): Promise<T> {
 	return sharedUiLock.withLock(fn);
 }
 
-export default function quiz(pi: ExtensionAPI) {
-	let quizSourcePath: string | null = null;
+function parsePaths(raw: string): string[] {
+	const trimmed = raw.trim();
+	if (!trimmed) return [];
+	const matches = trimmed.match(/"([^"]+)"|'([^']+)'|([^\s,]+)/g);
+	if (!matches) return [];
+	return matches.map((m) => m.replace(/^["']|["']$/g, "").trim()).filter(Boolean);
+}
 
-	pi.on("session_start", async (_event, ctx) => {
-		let lastSourceData: { path: string | null } | undefined;
-		for (const entry of ctx.sessionManager.getEntries()) {
-			if (entry.type === "custom" && entry.customType === "quiz-source") {
-				lastSourceData = entry.data as { path: string | null } | undefined;
-			}
-		}
-		if (lastSourceData?.path) {
-			quizSourcePath = lastSourceData.path;
-			const theme = ctx.ui.theme;
+export default function quiz(pi: ExtensionAPI) {
+	let quizSourcePaths: string[] = [];
+
+	function updateStatus(theme: any, ctx: any) {
+		if (quizSourcePaths.length === 0) {
+			ctx.ui.setStatus("quiz-source", undefined);
+		} else if (quizSourcePaths.length === 1) {
 			ctx.ui.setStatus(
 				"quiz-source",
-				theme.fg("accent", "📚 ") + theme.fg("dim", path.basename(quizSourcePath)),
+				theme.fg("accent", "📚 ") + theme.fg("dim", path.basename(quizSourcePaths[0])),
 			);
+		} else {
+			ctx.ui.setStatus(
+				"quiz-source",
+				theme.fg("accent", "📚 ") + theme.fg("dim", `${quizSourcePaths.length} sources`),
+			);
+		}
+	}
+
+	pi.on("session_start", async (_event, ctx) => {
+		let lastSourceData: { paths?: string[]; path?: string | null } | undefined;
+		for (const entry of ctx.sessionManager.getEntries()) {
+			if (entry.type === "custom" && entry.customType === "quiz-source") {
+				lastSourceData = entry.data as { paths?: string[]; path?: string | null } | undefined;
+			}
+		}
+		if (lastSourceData) {
+			if (Array.isArray(lastSourceData.paths)) {
+				quizSourcePaths = lastSourceData.paths.filter((p) => Boolean(p) && fs.existsSync(p));
+			} else if (typeof lastSourceData.path === "string" && fs.existsSync(lastSourceData.path)) {
+				quizSourcePaths = [lastSourceData.path];
+			}
+			updateStatus(ctx.ui.theme, ctx);
 		}
 	});
 
 	pi.registerCommand("quiz-source", {
-		description: "Link a folder or file as the knowledge source for quizzes",
+		description: "Link folder(s) or file(s) as knowledge sources for quizzes: /quiz-source <p1> [p2] | clear | list",
 		handler: async (args, ctx: any) => {
-			const targetPath = args.trim();
-			if (!targetPath) {
-				if (quizSourcePath) {
-					ctx.ui.notify(`Current quiz source: ${quizSourcePath}`, "info");
+			const raw = args.trim();
+			if (!raw || raw === "list") {
+				if (quizSourcePaths.length > 0) {
+					const listStr = quizSourcePaths.map((p, i) => `${i + 1}. ${p}`).join("\n");
+					ctx.ui.notify(`Current quiz sources:\n${listStr}\nUse /skill:quiz to begin.`, "info");
 				} else {
-					ctx.ui.notify("Usage: /quiz-source <path-to-folder-or-file>", "warning");
+					ctx.ui.notify("No quiz sources linked. Usage: /quiz-source <path1> [path2]...", "warning");
 				}
 				return;
 			}
 
-			if (targetPath.toLowerCase() === "clear" || targetPath.toLowerCase() === "none") {
-				quizSourcePath = null;
-				pi.appendEntry("quiz-source", { path: null });
-				ctx.ui.setStatus("quiz-source", undefined);
-				ctx.ui.notify("Quiz source unlinked", "info");
+			if (raw.toLowerCase() === "clear" || raw.toLowerCase() === "none") {
+				quizSourcePaths = [];
+				pi.appendEntry("quiz-source", { paths: [] });
+				updateStatus(ctx.ui.theme, ctx);
+				ctx.ui.notify("Quiz sources cleared", "info");
 				return;
 			}
 
-			const resolved = path.isAbsolute(targetPath) ? targetPath : path.resolve(ctx.cwd, targetPath);
+			const tokens = parsePaths(raw);
+			if (tokens.length === 0) return;
 
-			if (!fs.existsSync(resolved)) {
-				ctx.ui.notify(`Path does not exist: ${resolved}`, "error");
+			let isAdd = false;
+			let isRemove = false;
+			let targetTokens = tokens;
+			if (tokens[0].toLowerCase() === "add") {
+				isAdd = true;
+				targetTokens = tokens.slice(1);
+			} else if (tokens[0].toLowerCase() === "remove") {
+				isRemove = true;
+				targetTokens = tokens.slice(1);
+			}
+
+			if (isRemove) {
+				const toRemove = new Set(targetTokens.map((t) => path.isAbsolute(t) ? t : path.resolve(ctx.cwd, t)));
+				quizSourcePaths = quizSourcePaths.filter((p) => !toRemove.has(p) && !targetTokens.includes(path.basename(p)));
+				pi.appendEntry("quiz-source", { paths: quizSourcePaths });
+				updateStatus(ctx.ui.theme, ctx);
+				ctx.ui.notify(`Removed source(s). ${quizSourcePaths.length} remaining.`, "info");
 				return;
 			}
 
-			quizSourcePath = resolved;
-			pi.appendEntry("quiz-source", { path: resolved });
+			const validPaths: string[] = [];
+			const missingPaths: string[] = [];
 
-			const theme = ctx.ui.theme;
-			ctx.ui.setStatus(
-				"quiz-source",
-				theme.fg("accent", "📚 ") + theme.fg("dim", path.basename(resolved)),
-			);
-			ctx.ui.notify(`Linked quiz source: ${resolved}`, "success");
-
-			if (typeof ctx.isIdle === "function" && ctx.isIdle()) {
-				pi.sendUserMessage(`I linked knowledge source: "${resolved}". Inspect the files, identify the foundational principles and key mechanisms, and start quizzing me on these materials with deep, thought-provoking questions.`);
+			for (const t of targetTokens) {
+				const resolved = path.isAbsolute(t) ? t : path.resolve(ctx.cwd, t);
+				if (fs.existsSync(resolved)) {
+					validPaths.push(resolved);
+				} else {
+					missingPaths.push(t);
+				}
 			}
+
+			if (missingPaths.length > 0) {
+				ctx.ui.notify(`Path(s) not found: ${missingPaths.join(", ")}`, "error");
+				if (validPaths.length === 0) return;
+			}
+
+			if (isAdd) {
+				const existing = new Set(quizSourcePaths);
+				for (const p of validPaths) existing.add(p);
+				quizSourcePaths = Array.from(existing);
+			} else {
+				quizSourcePaths = Array.from(new Set(validPaths));
+			}
+
+			pi.appendEntry("quiz-source", { paths: quizSourcePaths });
+			updateStatus(ctx.ui.theme, ctx);
+			ctx.ui.notify(`Linked ${quizSourcePaths.length} quiz source(s). Use /skill:quiz to begin.`, "success");
+		},
+	});
+
+	pi.registerTool({
+		name: "get_quiz_sources",
+		label: "get_quiz_sources",
+		description:
+			"Get the list of file and folder paths currently linked as knowledge sources for quizzes (configured via /quiz-source).",
+		promptSnippet: "Use get_quiz_sources to retrieve knowledge files/folders linked by the user.",
+		promptGuidelines: [
+			"Call get_quiz_sources at the start of a quiz session to discover which paths the user wants to be tested on.",
+			"If sources are returned, inspect them using read, find, or grep to identify the concepts to test.",
+			"If no sources are returned, ask the user what topics or files they want to quiz on.",
+		],
+		parameters: Type.Object({}),
+		async execute() {
+			return {
+				content: [{
+					type: "text" as const,
+					text: quizSourcePaths.length > 0
+						? `Linked quiz knowledge sources (${quizSourcePaths.length}):\n${quizSourcePaths.map((p, i) => `${i + 1}. ${p}`).join("\n")}`
+						: "No quiz sources currently linked via /quiz-source. Ask user which files, folders, or topics they want to be tested on.",
+				}],
+				details: { paths: quizSourcePaths },
+			};
 		},
 	});
 

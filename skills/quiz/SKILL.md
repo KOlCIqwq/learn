@@ -21,9 +21,9 @@ Options-based multiple choice is reserved strictly for rapid diagnostic edge-pro
 ## Step 1: Ingesting Knowledge from Linked Sources
 
 Knowledge to test comes from:
-1. **Linked source path** set via `/quiz-source <path>` (persisted in session state).
+1. **Linked sources** set via `/quiz-source <path1> [path2]...`. Call `get_quiz_sources` at the start to retrieve all linked paths.
 2. **Explicit paths, files, or folders** passed by the user in chat or via `@file` references.
-3. If no source path is specified, ask the user what materials or topic they want to be tested on.
+3. If `get_quiz_sources` returns empty and no path is passed, ask the user what materials or topics they want to be tested on.
 
 ### How to acquire knowledge from the source:
 - **Scan directory structure:** Use `find` or `ls` to survey the scope.

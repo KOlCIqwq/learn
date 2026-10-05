@@ -1045,6 +1045,7 @@ export default function quiz(pi: ExtensionAPI) {
 			"When using open-ended mode, provide explanation containing the key points/rubric to grade against.",
 			"Options mode (with at least 2 options) is available when you need fast diagnostic edge-probing. In options mode, correctAnswer is required and matches the option value string.",
 			"quiz tests understanding with evaluation; ask_user_question is for preferences, choices, or general clarifications without evaluation.",
+			"MANDATORY FEEDBACK: After the user submits an open-ended answer, you MUST output detailed evaluation and feedback in your response text before calling quiz again. Do NOT silently ask the next question without critiquing the previous answer.",
 		],
 		parameters: QuizParams,
 
@@ -1077,7 +1078,20 @@ export default function quiz(pi: ExtensionAPI) {
 						return cancelledResult(params.question, mode, [], context);
 					}
 					const textAnswer = answer.trim();
-					const message = `User submitted written answer for evaluation:\n\n${textAnswer || "(empty response)"}\n\nEvaluate the user's answer against the target concept. Clearly explain what is accurate, identify misconceptions or missing links, and provide targeted feedback.`;
+					const message = [
+						"STUDENT'S SUBMITTED ANSWER:",
+						'"""',
+						textAnswer || "(empty response)",
+						'"""',
+						"",
+						explanation ? `EXPECTED KEY POINTS / RUBRIC:\n${explanation}\n` : "",
+						"REQUIRED ASSISTANT ACTION:",
+						"You MUST deliver detailed feedback to the student in your assistant message:",
+						"1. Affirm what they understood accurately.",
+						"2. Point out specific gaps, errors, or missing causal mechanisms.",
+						"3. Explain the correct concept or derivation clearly.",
+						"Do NOT call another quiz tool until you have delivered this evaluation in text.",
+					].filter(Boolean).join("\n");
 					return {
 						content: [{ type: "text" as const, text: message }],
 						details: buildStructuredResult(
